@@ -104,17 +104,16 @@ async function setupLocalStream() {
         autoGainControl: true,
         channelCount: 1,
         sampleRate: 8000,
-        sampleSize: 16
+        sampleSize: 16,
+        codec: 'PCM'
       },
       video: false 
     });
     const localAudio = document.getElementById("localAudio");
     localAudio.srcObject = localStream;
     localAudio.muted = true; // Keep muted to prevent echo
-    console.log('Local stream setup successful:', localStream.getAudioTracks()[0].getSettings());
   } catch (error) {
     console.error("Error accessing media devices:", error);
-    alert("Failed to access microphone. Please ensure you have granted microphone permissions and try again.");
     throw error;
   }
 }
