@@ -233,27 +233,152 @@ function updateActiveStreams() {
 }
 
 async function startCall(toUser) {
-  // Check if user is already in the call
-  if (activeCallParticipants.has(toUser)) {
-    console.warn(`Cannot call ${toUser}: Already in call with this user`);
-    return;
+  try {
+    if (!device) {
+      throw new Error('Mediasoup device not initialized');
+    }
+
+    // Create WebRTC transport for sending
+    const { transport, rtpCapabilities } = await createSendTransport();
+    sendTransport = transport;
+
+    // Create producer
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const track = stream.getAudioTracks()[0];
+    producer = await sendTransport.produce({ track });
+
+    // Create and send offer
+    const offer = await createOffer();
+    socket.emit("call-user", {
+      toUserId: toUser,
+      offer
+    });
+
+    // Show calling status
+    document.getElementById("callStatus").textContent = `Calling ${toUser}...`;
+  } catch (error) {
+    console.error("Error starting call:", error);
+    alert("Failed to start call. Please try again.");
   }
+}
 
-  const pc = createPeerConnection(toUser);
-  peers[toUser] = pc;
-  activeCallParticipants.add(toUser);
+async function createSendTransport() {
+  try {
+    const { transport, rtpCapabilities } = await device.createSendTransport({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' }
+      ],
+      rtpCapabilities: device.rtpCapabilities
+    });
 
-  localStream.getTracks().forEach((track) =>
-    pc.addTrack(track, localStream)
-  );
+    transport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+      try {
+        await socket.emit('connect-transport', {
+          transportId: transport.id,
+          dtlsParameters
+        });
+        callback();
+      } catch (error) {
+        errback(error);
+      }
+    });
 
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
+    transport.on('produce', async ({ kind, rtpParameters }, callback, errback) => {
+      try {
+        const { id } = await socket.emit('produce', {
+          transportId: transport.id,
+          kind,
+          rtpParameters
+        });
+        callback({ id });
+      } catch (error) {
+        errback(error);
+      }
+    });
 
-  socket.emit("call-user", {
-    toUserId: toUser,
-    offer: pc.localDescription,
-  });
+    return { transport, rtpCapabilities };
+  } catch (error) {
+    console.error("Error creating send transport:", error);
+    throw error;
+  }
+}
+
+async function createOffer() {
+  try {
+    const offer = await sendTransport.produce({
+      kind: 'audio',
+      rtpParameters: {
+        codecs: [
+          {
+            mimeType: 'audio/PCMA',
+            clockRate: 8000,
+            channels: 1,
+            parameters: {}
+          }
+        ]
+      }
+    });
+    return offer;
+  } catch (error) {
+    console.error("Error creating offer:", error);
+    throw error;
+  }
+}
+
+// Handle incoming calls
+socket.on("incoming-call", async ({ fromUserId, offer }) => {
+  try {
+    // Show incoming call notification
+    document.getElementById("callerName").textContent = fromUserId;
+    document.getElementById("incomingCallNotification").style.display = "block";
+    
+    // Store the offer for later use
+    pendingCall = { fromUserId, offer };
+  } catch (error) {
+    console.error("Error handling incoming call:", error);
+    rejectCall();
+  }
+});
+
+async function acceptCall() {
+  try {
+    if (!pendingCall) return;
+
+    const { fromUserId, offer } = pendingCall;
+    
+    // Create WebRTC transport for receiving
+    const { transport } = await createRecvTransport();
+    recvTransport = transport;
+
+    // Create consumer
+    const consumer = await transport.consume({
+      id: offer.id,
+      producerId: offer.producerId,
+      kind: 'audio',
+      rtpParameters: offer.rtpParameters
+    });
+
+    // Add consumer to map
+    consumers.set(fromUserId, consumer);
+
+    // Create and send answer
+    const answer = await createAnswer(consumer);
+    socket.emit("answer-call", {
+      toUserId: fromUserId,
+      answer
+    });
+
+    // Hide notification
+    document.getElementById("incomingCallNotification").style.display = "none";
+    pendingCall = null;
+
+    // Update UI
+    updateCallState();
+  } catch (error) {
+    console.error("Error accepting call:", error);
+    alert("Failed to accept call. Please try again.");
+    rejectCall();
+  }
 }
 
 function inviteUser(toUser) {
@@ -276,8 +401,8 @@ socket.on("online-users", (users) => {
   const container = document.getElementById("onlineUsers");
   container.innerHTML = "";
 
-  users.forEach((u) => {
-    if (u === myUsername) return;
+  users.forEach((username) => {
+    if (username === myUsername) return;
 
     const userCard = document.createElement("div");
     userCard.className = "user-card";
@@ -287,39 +412,22 @@ socket.on("online-users", (users) => {
 
     const avatar = document.createElement("div");
     avatar.className = "user-avatar";
-    avatar.textContent = u.charAt(0).toUpperCase();
+    avatar.textContent = username.charAt(0).toUpperCase();
 
-    const username = document.createElement("span");
-    username.textContent = u;
-
-    // Add call status indicator
-    if (activeCallParticipants.has(u)) {
-      const status = document.createElement("span");
-      status.className = "call-status";
-      status.textContent = "In Call";
-      status.style.color = "var(--success-color)";
-      status.style.marginLeft = "0.5rem";
-      username.appendChild(status);
-    }
+    const usernameSpan = document.createElement("span");
+    usernameSpan.textContent = username;
 
     userInfo.appendChild(avatar);
-    userInfo.appendChild(username);
+    userInfo.appendChild(usernameSpan);
 
     const userActions = document.createElement("div");
     userActions.className = "user-actions";
 
     const callBtn = document.createElement("button");
     callBtn.textContent = "Call";
-    callBtn.disabled = activeCallParticipants.has(u);
-    callBtn.onclick = () => startCall(u);
-
-    const inviteBtn = document.createElement("button");
-    inviteBtn.textContent = "Invite";
-    inviteBtn.disabled = activeCallParticipants.has(u);
-    inviteBtn.onclick = () => inviteUser(u);
+    callBtn.onclick = () => startCall(username);
 
     userActions.appendChild(callBtn);
-    userActions.appendChild(inviteBtn);
 
     userCard.appendChild(userInfo);
     userCard.appendChild(userActions);
