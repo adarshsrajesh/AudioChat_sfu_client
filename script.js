@@ -1,5 +1,5 @@
 // const socket = io("http://192.168.137.69:5000");
-const socket = io("http://localhost:5000");
+const socket = io("https://audio-call-sfu-server.onrender.com/:5000");
 
 const peers = {};
 let localStream;
