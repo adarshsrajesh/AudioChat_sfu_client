@@ -4,10 +4,12 @@ const socket = io("https://audio-call-sfu-server.onrender.com", {
   reconnection: true,
   reconnectionAttempts: 5,
   reconnectionDelay: 1000,
-  timeout: 10000,
+  timeout: 20000,
   path: '/socket.io/',
   secure: true,
-  rejectUnauthorized: false
+  rejectUnauthorized: false,
+  forceNew: true,
+  autoConnect: true
 });
 
 const peers = {};
@@ -52,12 +54,19 @@ socket.on('connect', () => {
   console.log('Connected to server with ID:', socket.id);
   document.getElementById('connectionStatus').textContent = 'Connected';
   document.getElementById('connectionStatus').style.color = 'green';
+  document.getElementById('serverStatus').textContent = 'Connected';
 });
 
-socket.on('disconnect', () => {
-  console.log('Disconnected from server');
+socket.on('disconnect', (reason) => {
+  console.log('Disconnected from server. Reason:', reason);
   document.getElementById('connectionStatus').textContent = 'Disconnected';
   document.getElementById('connectionStatus').style.color = 'red';
+  document.getElementById('serverStatus').textContent = 'Disconnected';
+  
+  // Try to reconnect if not disconnected by the server
+  if (reason !== 'io server disconnect') {
+    socket.connect();
+  }
 });
 
 socket.on('connect_error', (error) => {
@@ -69,18 +78,21 @@ socket.on('connect_error', (error) => {
   });
   document.getElementById('connectionStatus').textContent = `Connection Error: ${error.message}`;
   document.getElementById('connectionStatus').style.color = 'red';
+  document.getElementById('serverStatus').textContent = 'Connection Error';
 });
 
 socket.on('reconnect_attempt', (attemptNumber) => {
   console.log('Reconnection attempt:', attemptNumber);
   document.getElementById('connectionStatus').textContent = `Reconnecting... (Attempt ${attemptNumber})`;
   document.getElementById('connectionStatus').style.color = 'orange';
+  document.getElementById('serverStatus').textContent = 'Reconnecting...';
 });
 
 socket.on('reconnect_failed', () => {
   console.error('Failed to reconnect to server');
   document.getElementById('connectionStatus').textContent = 'Failed to reconnect';
   document.getElementById('connectionStatus').style.color = 'red';
+  document.getElementById('serverStatus').textContent = 'Connection Failed';
 });
 
 // Add error event handler
@@ -88,6 +100,7 @@ socket.on('error', (error) => {
   console.error('Socket error:', error);
   document.getElementById('connectionStatus').textContent = `Socket Error: ${error.message}`;
   document.getElementById('connectionStatus').style.color = 'red';
+  document.getElementById('serverStatus').textContent = 'Error';
 });
 
 async function login() {
