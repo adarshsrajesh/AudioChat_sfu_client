@@ -1,10 +1,13 @@
 // const socket = io("http://192.168.137.69:5000");
-const socket = io("https://audio-call-sfu-server.onrender.com:5000", {
+const socket = io("https://audio-call-sfu-server.onrender.com", {
   transports: ['websocket', 'polling'],
   reconnection: true,
   reconnectionAttempts: 5,
   reconnectionDelay: 1000,
-  timeout: 10000
+  timeout: 10000,
+  path: '/socket.io/',
+  secure: true,
+  rejectUnauthorized: false
 });
 
 const peers = {};
@@ -39,7 +42,12 @@ socket.on('disconnect', () => {
 });
 
 socket.on('connect_error', (error) => {
-  console.error('Connection error:', error.message);
+  console.error('Connection error details:', {
+    message: error.message,
+    description: error.description,
+    type: error.type,
+    context: error
+  });
   document.getElementById('connectionStatus').textContent = `Connection Error: ${error.message}`;
   document.getElementById('connectionStatus').style.color = 'red';
 });
@@ -53,6 +61,13 @@ socket.on('reconnect_attempt', (attemptNumber) => {
 socket.on('reconnect_failed', () => {
   console.error('Failed to reconnect to server');
   document.getElementById('connectionStatus').textContent = 'Failed to reconnect';
+  document.getElementById('connectionStatus').style.color = 'red';
+});
+
+// Add error event handler
+socket.on('error', (error) => {
+  console.error('Socket error:', error);
+  document.getElementById('connectionStatus').textContent = `Socket Error: ${error.message}`;
   document.getElementById('connectionStatus').style.color = 'red';
 });
 
