@@ -701,7 +701,9 @@ socket.on("participant-left", ({ leavingUserId }) => {
 // Initialize mediasoup device
 async function initializeDevice() {
   try {
-    device = new mediasoupClient.Device();
+    device = new mediasoupClient.Device({
+      debug: true
+    });
     
     // Get router RTP capabilities
     const routerRtpCapabilities = await new Promise((resolve, reject) => {
@@ -716,7 +718,7 @@ async function initializeDevice() {
 
     // Load the device with router capabilities
     await device.load({ routerRtpCapabilities });
-    console.log('Device loaded successfully');
+    console.log('Device loaded successfully with capabilities:', routerRtpCapabilities);
   } catch (error) {
     console.error('Error initializing device:', error);
     throw error;
