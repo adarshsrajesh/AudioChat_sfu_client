@@ -16,6 +16,11 @@ let myUsername;
 let pendingCall = null;
 let pendingInvite = null;
 let activeCallParticipants = new Set(); // Track active call participants
+let device;
+let sendTransport;
+let recvTransport;
+let producer;
+let consumers = new Map();
 
 // ICE Server configuration for better connectivity
 const iceServers = {
@@ -77,6 +82,7 @@ async function login() {
 
   try {
     await setupLocalStream();
+    await initializeDevice();
     
     document.getElementById("loginSection").style.display = "none";
     document.getElementById("callSection").style.display = "block";
@@ -200,27 +206,69 @@ function updateActiveStreams() {
 }
 
 async function startCall(toUser) {
-  // Check if user is already in the call
-  if (activeCallParticipants.has(toUser)) {
-    console.warn(`Cannot call ${toUser}: Already in call with this user`);
-    return;
+  try {
+    if (activeCallParticipants.has(toUser)) {
+      console.warn(`Cannot call ${toUser}: Already in call with this user`);
+      return;
+    }
+
+    console.log('Starting call to:', toUser);
+    const roomId = `room_${myUsername}_${toUser}`;
+    
+    // Join room and get transport info
+    socket.emit('join-room', { roomId }, async (transportInfo) => {
+      try {
+        // Create send transport
+        sendTransport = device.createSendTransport(transportInfo);
+        
+        // Handle transport connection
+        sendTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+          try {
+            await socket.emit('connect-transport', {
+              transportId: sendTransport.id,
+              dtlsParameters
+            });
+            callback();
+          } catch (error) {
+            errback(error);
+          }
+        });
+
+        // Handle transport produce
+        sendTransport.on('produce', async ({ kind, rtpParameters }, callback, errback) => {
+          try {
+            const { id } = await socket.emit('produce', {
+              transportId: sendTransport.id,
+              kind,
+              rtpParameters
+            });
+            callback({ id });
+          } catch (error) {
+            errback(error);
+          }
+        });
+
+        // Produce audio
+        producer = await sendTransport.produce({
+          track: localStream.getAudioTracks()[0],
+          codecOptions: {
+            opusStereo: false,
+            opusDtx: true
+          }
+        });
+
+        console.log('Producer created:', producer.id);
+        activeCallParticipants.add(toUser);
+        updateCallState();
+      } catch (error) {
+        console.error('Error in startCall:', error);
+        alert('Failed to start call. Please try again.');
+      }
+    });
+  } catch (error) {
+    console.error('Error starting call:', error);
+    alert('Failed to start call. Please try again.');
   }
-
-  const pc = createPeerConnection(toUser);
-  peers[toUser] = pc;
-  activeCallParticipants.add(toUser);
-
-  localStream.getTracks().forEach((track) =>
-    pc.addTrack(track, localStream)
-  );
-
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-
-  socket.emit("call-user", {
-    toUserId: toUser,
-    offer: pc.localDescription,
-  });
 }
 
 function inviteUser(toUser) {
@@ -608,25 +656,31 @@ function updateCallState() {
 function leaveCall() {
   if (!activeCallParticipants.size) return;
 
-  // Notify all participants that we're leaving
-  for (const participant of activeCallParticipants) {
-    if (participant !== myUsername) {
-      socket.emit("participant-left", {
-        toUserId: participant,
-        leavingUserId: myUsername
-      });
-    }
+  // Close producer
+  if (producer) {
+    producer.close();
+    producer = null;
   }
 
-  // Close all peer connections
-  for (const [peerId, pc] of Object.entries(peers)) {
-    pc.close();
-    delete peers[peerId];
+  // Close consumers
+  for (const consumer of consumers.values()) {
+    consumer.close();
+  }
+  consumers.clear();
+
+  // Close transports
+  if (sendTransport) {
+    sendTransport.close();
+    sendTransport = null;
+  }
+  if (recvTransport) {
+    recvTransport.close();
+    recvTransport = null;
   }
 
   // Clear all remote audio elements
-  const remoteAudios = document.getElementById("remoteAudios");
-  remoteAudios.innerHTML = "";
+  const remoteAudios = document.getElementById('remoteAudios');
+  remoteAudios.innerHTML = '';
 
   // Clear active participants
   activeCallParticipants.clear();
@@ -641,4 +695,87 @@ socket.on("participant-left", ({ leavingUserId }) => {
   console.log(`Participant left: ${leavingUserId}`);
   removeParticipant(leavingUserId);
   updateCallState();
+});
+
+// Initialize mediasoup device
+async function initializeDevice() {
+  try {
+    device = new mediasoupClient.Device();
+    
+    // Get router RTP capabilities
+    const routerRtpCapabilities = await new Promise((resolve, reject) => {
+      socket.emit('getRouterRtpCapabilities', (response) => {
+        if (response.error) {
+          reject(response.error);
+        } else {
+          resolve(response.rtpCapabilities);
+        }
+      });
+    });
+
+    // Load the device with router capabilities
+    await device.load({ routerRtpCapabilities });
+    console.log('Device loaded successfully');
+  } catch (error) {
+    console.error('Error initializing device:', error);
+    throw error;
+  }
+}
+
+// Handle new producer
+socket.on('new-producer', async ({ producerId, username }) => {
+  console.log('New producer:', producerId, 'from:', username);
+  
+  try {
+    // Create recv transport if not exists
+    if (!recvTransport) {
+      const transportInfo = await new Promise((resolve, reject) => {
+        socket.emit('createRecvTransport', (response) => {
+          if (response.error) {
+            reject(response.error);
+          } else {
+            resolve(response);
+          }
+        });
+      });
+
+      recvTransport = device.createRecvTransport(transportInfo);
+      
+      recvTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+        try {
+          await socket.emit('connect-transport', {
+            transportId: recvTransport.id,
+            dtlsParameters
+          });
+          callback();
+        } catch (error) {
+          errback(error);
+        }
+      });
+    }
+
+    // Consume the producer
+    const consumer = await recvTransport.consume({
+      id: producerId,
+      producerId,
+      kind: 'audio',
+      rtpParameters: rtpParameters
+    });
+
+    consumers.set(producerId, consumer);
+
+    // Play the audio
+    const stream = new MediaStream([consumer.track]);
+    const audioElement = document.createElement('audio');
+    audioElement.id = `audio-${username}`;
+    audioElement.srcObject = stream;
+    audioElement.autoplay = true;
+    document.getElementById('remoteAudios').appendChild(audioElement);
+
+    activeCallParticipants.add(username);
+    updateCallState();
+    updateActiveStreams();
+  } catch (error) {
+    console.error('Error handling new producer:', error);
+  }
 });
