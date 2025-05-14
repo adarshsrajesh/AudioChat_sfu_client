@@ -28,6 +28,25 @@ const iceServers = {
   ]
 };
 
+let device;
+let sendTransport;
+let recvTransport;
+let producer;
+let consumers = new Map();
+
+// Initialize mediasoup device
+async function initializeDevice(routerRtpCapabilities) {
+  try {
+    device = new mediasoupClient.Device();
+    await device.load({ routerRtpCapabilities });
+    console.log('Mediasoup device loaded successfully');
+    return device;
+  } catch (error) {
+    console.error('Failed to initialize mediasoup device:', error);
+    throw error;
+  }
+}
+
 // Connection status handling
 socket.on('connect', () => {
   console.log('Connected to server with ID:', socket.id);
@@ -76,13 +95,28 @@ async function login() {
   if (!myUsername) return alert("Enter username");
 
   try {
-    await setupLocalStream();
-    
-    document.getElementById("loginSection").style.display = "none";
-    document.getElementById("callSection").style.display = "block";
-    document.getElementById("myUsername").textContent = myUsername;
+    // First, get router RTP capabilities from the server
+    socket.emit('getRouterRtpCapabilities', (routerRtpCapabilities) => {
+      if (!routerRtpCapabilities) {
+        throw new Error('Failed to get router RTP capabilities');
+      }
+      
+      // Initialize device with router capabilities
+      initializeDevice(routerRtpCapabilities)
+        .then(async () => {
+          await setupLocalStream();
+          
+          document.getElementById("loginSection").style.display = "none";
+          document.getElementById("callSection").style.display = "block";
+          document.getElementById("myUsername").textContent = myUsername;
 
-    socket.emit("login", myUsername);
+          socket.emit("login", myUsername);
+        })
+        .catch(error => {
+          console.error("Failed to initialize device:", error);
+          alert("Failed to initialize audio device. Please try again.");
+        });
+    });
   } catch (error) {
     console.error("Failed to setup media stream:", error);
     alert("Failed to access microphone. Please ensure you have granted microphone permissions.");
@@ -98,8 +132,7 @@ async function setupLocalStream() {
         autoGainControl: true,
         channelCount: 1,
         sampleRate: 8000,
-        sampleSize: 16,
-        codec: 'PCM'
+        sampleSize: 16
       },
       video: false 
     });
