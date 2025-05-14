@@ -1,5 +1,5 @@
 // const socket = io("http://192.168.137.69:5000");
-const socket = io("https://audioserver.onrender.com");
+const socket = io("http://localhost:5000");
 
 const peers = {};
 let localStream;
@@ -92,9 +92,9 @@ function createPeerConnection(peerId) {
   pc.onnegotiationneeded = async () => {
     try {
       const offer = await pc.createOffer();
-      // Modify SDP to use G.711
+      // Modify SDP to use G.711 PCMU
       const modifiedSdp = offer.sdp
-        .replace(/(m=audio.*\r\n)/g, '$1a=rtpmap:0 PCM/8000\r\n')
+        .replace(/(m=audio.*\r\n)/g, '$1a=rtpmap:0 PCMU/8000\r\n')
         .replace(/(a=rtpmap:.*\r\n)/g, '') // Remove other codecs
         .replace(/(a=fmtp:.*\r\n)/g, ''); // Remove fmtp lines
       
