@@ -1,4 +1,5 @@
 // const socket = io("http://192.168.137.69:5000");
+
 const socket = io("https://audio-call-sfu-server.onrender.com", {
   transports: ['websocket', 'polling'],
   reconnection: true,
@@ -165,7 +166,7 @@ async function login() {
       
       try {
         // Initialize device with router capabilities
-        // await initializeDevice(routerRtpCapabilities);
+        await initializeDevice(routerRtpCapabilities);
         await setupLocalStream();
         
         document.getElementById("loginSection").style.display = "none";
