@@ -5,8 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Audio Call App</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <script src="https://unpkg.com/mediasoup-client@3/dist/mediasoup-client.min.js"></script>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script>
+    window.addEventListener('error', function(e) {
+      if (e.target.src && e.target.src.includes('mediasoup-client')) {
+        console.error('Failed to load mediasoup client:', e);
+        alert('Failed to load required audio components. Please refresh the page.');
+      }
+    }, true);
+  </script>
+  <script src="https://unpkg.com/mediasoup-client@3/dist/mediasoup-client.min.js"></script>
+  <script src="script.js" defer></script>
   <style>
     :root {
       --primary-color: #4f46e5;
@@ -378,7 +387,5 @@
       </div>
     </div>
   </div>
-
-  <script src="script.js"></script>
 </body>
 </html>

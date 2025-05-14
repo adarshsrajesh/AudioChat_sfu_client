@@ -2,14 +2,17 @@
 const socket = io("https://audio-call-sfu-server.onrender.com", {
   transports: ['websocket', 'polling'],
   reconnection: true,
-  reconnectionAttempts: 5,
+  reconnectionAttempts: Infinity,
   reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
   timeout: 20000,
   path: '/socket.io/',
   secure: true,
   rejectUnauthorized: false,
   forceNew: true,
-  autoConnect: true
+  autoConnect: true,
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
 const peers = {};
@@ -36,36 +39,82 @@ let recvTransport;
 let producer;
 let consumers = new Map();
 
+// Add connection state tracking
+let isConnected = false;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+
 // Initialize mediasoup device
 async function initializeDevice(routerRtpCapabilities) {
   try {
+    if (typeof mediasoupClient === 'undefined') {
+      throw new Error('Mediasoup client library not loaded. Please refresh the page.');
+    }
+
     device = new mediasoupClient.Device();
-    await device.load({ routerRtpCapabilities });
-    console.log('Mediasoup device loaded successfully');
+    
+    if (!device.loaded) {
+      await device.load({ routerRtpCapabilities });
+      console.log('Mediasoup device loaded successfully');
+    } else {
+      console.log('Mediasoup device already loaded');
+    }
+    
     return device;
   } catch (error) {
     console.error('Failed to initialize mediasoup device:', error);
+    document.getElementById('connectionStatus').textContent = 'Failed to initialize audio device';
+    document.getElementById('connectionStatus').style.color = 'red';
     throw error;
   }
 }
 
-// Connection status handling
+// Enhanced connection status handling
 socket.on('connect', () => {
   console.log('Connected to server with ID:', socket.id);
+  isConnected = true;
+  reconnectAttempts = 0;
   document.getElementById('connectionStatus').textContent = 'Connected';
   document.getElementById('connectionStatus').style.color = 'green';
   document.getElementById('serverStatus').textContent = 'Connected';
+  
+  // Start periodic ping
+  startPingInterval();
 });
+
+function startPingInterval() {
+  // Send ping every 30 seconds
+  setInterval(() => {
+    if (isConnected) {
+      socket.emit('ping');
+    }
+  }, 30000);
+}
 
 socket.on('disconnect', (reason) => {
   console.log('Disconnected from server. Reason:', reason);
+  isConnected = false;
   document.getElementById('connectionStatus').textContent = 'Disconnected';
   document.getElementById('connectionStatus').style.color = 'red';
   document.getElementById('serverStatus').textContent = 'Disconnected';
   
-  // Try to reconnect if not disconnected by the server
-  if (reason !== 'io server disconnect') {
+  // Handle reconnection based on reason
+  if (reason === 'io server disconnect') {
+    // Server initiated disconnect, try to reconnect
     socket.connect();
+  } else if (reason === 'transport close') {
+    // Transport error, implement exponential backoff
+    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+      console.log(`Attempting to reconnect in ${delay}ms...`);
+      setTimeout(() => {
+        reconnectAttempts++;
+        socket.connect();
+      }, delay);
+    } else {
+      console.error('Max reconnection attempts reached');
+      document.getElementById('connectionStatus').textContent = 'Connection Failed - Please refresh';
+    }
   }
 });
 
@@ -90,7 +139,7 @@ socket.on('reconnect_attempt', (attemptNumber) => {
 
 socket.on('reconnect_failed', () => {
   console.error('Failed to reconnect to server');
-  document.getElementById('connectionStatus').textContent = 'Failed to reconnect';
+  document.getElementById('connectionStatus').textContent = 'Failed to reconnect - Please refresh';
   document.getElementById('connectionStatus').style.color = 'red';
   document.getElementById('serverStatus').textContent = 'Connection Failed';
 });
@@ -109,26 +158,25 @@ async function login() {
 
   try {
     // First, get router RTP capabilities from the server
-    socket.emit('getRouterRtpCapabilities', (routerRtpCapabilities) => {
+    socket.emit('getRouterRtpCapabilities', async (routerRtpCapabilities) => {
       if (!routerRtpCapabilities) {
         throw new Error('Failed to get router RTP capabilities');
       }
       
-      // Initialize device with router capabilities
-      initializeDevice(routerRtpCapabilities)
-        .then(async () => {
-          await setupLocalStream();
-          
-          document.getElementById("loginSection").style.display = "none";
-          document.getElementById("callSection").style.display = "block";
-          document.getElementById("myUsername").textContent = myUsername;
+      try {
+        // Initialize device with router capabilities
+        // await initializeDevice(routerRtpCapabilities);
+        await setupLocalStream();
+        
+        document.getElementById("loginSection").style.display = "none";
+        document.getElementById("callSection").style.display = "block";
+        document.getElementById("myUsername").textContent = myUsername;
 
-          socket.emit("login", myUsername);
-        })
-        .catch(error => {
-          console.error("Failed to initialize device:", error);
-          alert("Failed to initialize audio device. Please try again.");
-        });
+        socket.emit("login", myUsername);
+      } catch (error) {
+        console.error("Failed to initialize device:", error);
+        alert("Failed to initialize audio device. Please refresh the page and try again.");
+      }
     });
   } catch (error) {
     console.error("Failed to setup media stream:", error);
