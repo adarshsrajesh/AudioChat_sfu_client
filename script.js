@@ -1,5 +1,11 @@
 // const socket = io("http://192.168.137.69:5000");
-const socket = io("https://audio-call-sfu-server.onrender.com/:5000");
+const socket = io("https://audio-call-sfu-server.onrender.com:5000", {
+  transports: ['websocket', 'polling'],
+  reconnection: true,
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000,
+  timeout: 10000
+});
 
 const peers = {};
 let localStream;
@@ -21,7 +27,7 @@ const iceServers = {
 
 // Connection status handling
 socket.on('connect', () => {
-  console.log('Connected to server');
+  console.log('Connected to server with ID:', socket.id);
   document.getElementById('connectionStatus').textContent = 'Connected';
   document.getElementById('connectionStatus').style.color = 'green';
 });
@@ -33,8 +39,20 @@ socket.on('disconnect', () => {
 });
 
 socket.on('connect_error', (error) => {
-  console.error('Connection error:', error);
-  document.getElementById('connectionStatus').textContent = 'Connection Error';
+  console.error('Connection error:', error.message);
+  document.getElementById('connectionStatus').textContent = `Connection Error: ${error.message}`;
+  document.getElementById('connectionStatus').style.color = 'red';
+});
+
+socket.on('reconnect_attempt', (attemptNumber) => {
+  console.log('Reconnection attempt:', attemptNumber);
+  document.getElementById('connectionStatus').textContent = `Reconnecting... (Attempt ${attemptNumber})`;
+  document.getElementById('connectionStatus').style.color = 'orange';
+});
+
+socket.on('reconnect_failed', () => {
+  console.error('Failed to reconnect to server');
+  document.getElementById('connectionStatus').textContent = 'Failed to reconnect';
   document.getElementById('connectionStatus').style.color = 'red';
 });
 
